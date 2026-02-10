@@ -17,9 +17,10 @@ const (
 
 const ecnIPv4DataLen = 4
 
-// ReadBatch only returns a single packet on OSX,
-// see https://godoc.org/golang.org/x/net/ipv4#PacketConn.ReadBatch.
-const batchSize = 1
+// batchSize is the number of packets to read/write in a single syscall.
+// We use sendmsg_x/recvmsg_x on Darwin which support batched I/O,
+// so we can batch more than Linux's recvmmsg (which uses 8).
+const batchSize = 16
 
 func parseIPv4PktInfo(body []byte) (ip netip.Addr, ifIndex uint32, ok bool) {
 	// struct in_pktinfo {

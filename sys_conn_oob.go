@@ -132,7 +132,7 @@ func newConn(c OOBCapablePacketConn, supportsDF bool) (*oobConn, error) {
 	if ibc, ok := c.(batchConn); ok {
 		bc = ibc
 	} else {
-		bc = ipv4.NewPacketConn(c)
+		bc = newBatchConn(c)
 	}
 
 	msgs := make([]ipv4.Message, batchSize)

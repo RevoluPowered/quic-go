@@ -166,6 +166,17 @@ type Transport struct {
 	logger utils.Logger
 }
 
+// newDialSendConn creates a sendConn for an outgoing dial.
+// For single-use transports (DialAddr), it connect()'s the shared socket
+// to enable XNU's sendmsg_x pru_sosend_list fast path on Darwin.
+func (t *Transport) newDialSendConn(addr net.Addr) *sconn {
+	sc := newSendConn(t.conn, addr, packetInfo{}, utils.DefaultLogger)
+	if t.isSingleUse {
+		sc.connectSharedSocket()
+	}
+	return sc
+}
+
 // Listen starts listening for incoming QUIC connections.
 // There can only be a single listener on any net.PacketConn.
 // Listen may only be called again after the current listener was closed.
@@ -254,7 +265,7 @@ func (t *Transport) dial(ctx context.Context, addr net.Addr, host string, tlsCon
 	tlsConf = tlsConf.Clone()
 	setTLSConfigServerName(tlsConf, addr, host)
 	return t.doDial(ctx,
-		newSendConn(t.conn, addr, packetInfo{}, utils.DefaultLogger),
+		t.newDialSendConn(addr),
 		tlsConf,
 		conf,
 		0,

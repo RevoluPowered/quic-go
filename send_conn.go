@@ -4,9 +4,16 @@ import (
 	"net"
 	"sync/atomic"
 
+	"golang.org/x/net/ipv4"
+
 	"github.com/quic-go/quic-go/internal/protocol"
 	"github.com/quic-go/quic-go/internal/utils"
 )
+
+// connectedBatchWriter is the subset of batchConn needed for connected writes.
+type connectedBatchWriter interface {
+	WriteBatch(ms []ipv4.Message, flags int) (int, error)
+}
 
 // A sendConn allows sending using a simple Write() on a non-connected packet conn.
 type sendConn interface {
@@ -27,6 +34,15 @@ type remoteAddrInfo struct {
 
 type sconn struct {
 	rawConn
+
+	// isConnected is true when the underlying shared socket has been connect()'d
+	// to the remote peer. When true, writes use nil addr (msg_name=NULL) which
+	// on Darwin lets XNU's sendmsg_x hit the pru_sosend_list fast path.
+	// All connected writes go through batchWriter (raw sendmsg_x) because Go's
+	// WriteMsgUDP checks fd.isConnected internally and rejects nil addr.
+	isConnected bool
+	isIPv4      bool                 // address family for ECN OOB construction
+	batchWriter connectedBatchWriter // raw sendmsg_x path, set when isConnected
 
 	localAddr net.Addr
 
@@ -66,10 +82,14 @@ func newSendConn(c rawConn, remote net.Addr, info packetInfo, logger utils.Logge
 		addr: remote,
 		oob:  oob,
 	})
+
 	return sc
 }
 
 func (c *sconn) Write(p []byte, gsoSize uint16, ecn protocol.ECN) error {
+	if c.isConnected {
+		return c.writeConnected(p, gsoSize, ecn)
+	}
 	ai := c.remoteAddrInfo.Load()
 	err := c.writePacket(p, ai.addr, ai.oob, gsoSize, ecn)
 	if err != nil && isGSOError(err) {
@@ -91,6 +111,30 @@ func (c *sconn) Write(p []byte, gsoSize uint16, ecn protocol.ECN) error {
 		}
 		return nil
 	}
+	return err
+}
+
+// writeConnected sends via the connected shared socket with nil addr (msg_name=NULL).
+// Uses raw sendmsg_x (via batchWriter) because Go's WriteMsgUDP rejects nil addr
+// on sockets connected via raw fd (fd.isConnected is false in Go's runtime).
+func (c *sconn) writeConnected(p []byte, gsoSize uint16, ecn protocol.ECN) error {
+	var oob []byte
+	if ecn != protocol.ECNUnsupported && c.rawConn.capabilities().ECN {
+		if c.isIPv4 {
+			oob = appendIPv4ECNMsg(nil, ecn)
+		} else {
+			oob = appendIPv6ECNMsg(nil, ecn)
+		}
+	}
+	msgs := [1]ipv4.Message{{
+		Buffers: [][]byte{p},
+		OOB:     oob,
+	}}
+	_, err := c.batchWriter.WriteBatch(msgs[:], 0)
+	if err != nil && !c.wroteFirstPacket && isPermissionError(err) {
+		_, err = c.batchWriter.WriteBatch(msgs[:], 0)
+	}
+	c.wroteFirstPacket = true
 	return err
 }
 

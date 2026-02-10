@@ -31,7 +31,7 @@ type sendQueue struct {
 
 var _ sender = &sendQueue{}
 
-const sendQueueCapacity = 8
+const sendQueueCapacity = 16
 
 func newSendQueue(conn sendConn) sender {
 	return &sendQueue{
@@ -87,16 +87,53 @@ func (h *sendQueue) Run() error {
 			// make sure that all queued packets are actually sent out
 			shouldClose = true
 		case e := <-h.queue:
-			if err := h.conn.Write(e.buf.Data, e.gsoSize, e.ecn); err != nil {
-				// This additional check enables:
-				// 1. Checking for "datagram too large" message from the kernel, as such,
-				// 2. Path MTU discovery,and
-				// 3. Eventual detection of loss PingFrame.
-				if !isSendMsgSizeErr(err) {
-					return err
+			// Drain additional queued packets for batch sending.
+			var entries [sendQueueCapacity]queueEntry
+			entries[0] = e
+			n := 1
+		drain:
+			for n < sendQueueCapacity {
+				select {
+				case e := <-h.queue:
+					entries[n] = e
+					n++
+				default:
+					break drain
 				}
 			}
-			e.buf.Release()
+
+			// Try batch send if connection supports it and we have multiple entries.
+			if n > 1 {
+				if bsc, ok := h.conn.(interface {
+					WriteBatch([]queueEntry) (int, error)
+				}); ok {
+					_, err := bsc.WriteBatch(entries[:n])
+					for i := 0; i < n; i++ {
+						entries[i].buf.Release()
+					}
+					if err != nil && !isSendMsgSizeErr(err) {
+						return err
+					}
+					select {
+					case h.available <- struct{}{}:
+					default:
+					}
+					continue
+				}
+			}
+
+			// Fall back to individual sends.
+			for i := 0; i < n; i++ {
+				if err := h.conn.Write(entries[i].buf.Data, entries[i].gsoSize, entries[i].ecn); err != nil {
+					if !isSendMsgSizeErr(err) {
+						for j := i; j < n; j++ {
+							entries[j].buf.Release()
+						}
+						return err
+					}
+				}
+				entries[i].buf.Release()
+			}
 			select {
 			case h.available <- struct{}{}:
 			default:
