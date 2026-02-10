@@ -7,6 +7,8 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/quic-go/quic-go/internal/protocol"
 )
 
 func newConn(c OOBCapablePacketConn, supportsDF bool) (*basicConn, error) {
@@ -40,3 +42,8 @@ type packetInfo struct {
 }
 
 func (i *packetInfo) OOB() []byte { return nil }
+
+// Stubs for non-OOB platforms. writeConnected in send_conn.go references these
+// but is never called on Windows (connectSharedSocket is a no-op on non-Darwin).
+func appendIPv4ECNMsg(b []byte, _ protocol.ECN) []byte { return b }
+func appendIPv6ECNMsg(b []byte, _ protocol.ECN) []byte { return b }
