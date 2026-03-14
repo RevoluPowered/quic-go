@@ -102,27 +102,26 @@ func (h *sendQueue) Run() error {
 				}
 			}
 
-			// Try batch send if connection supports it and we have multiple entries.
-			if n > 1 {
-				if bsc, ok := h.conn.(interface {
-					WriteBatch([]queueEntry) (int, error)
-				}); ok {
-					_, err := bsc.WriteBatch(entries[:n])
-					for i := 0; i < n; i++ {
-						entries[i].buf.Release()
-					}
-					if err != nil && !isSendMsgSizeErr(err) {
-						return err
-					}
-					select {
-					case h.available <- struct{}{}:
-					default:
-					}
-					continue
+			// Always try batch send (sendmsg_x with n=1 has same cost as sendmsg,
+			// but keeps us on the connected-socket fast path on Darwin).
+			if bsc, ok := h.conn.(interface {
+				WriteBatch([]queueEntry) (int, error)
+			}); ok {
+				_, err := bsc.WriteBatch(entries[:n])
+				for i := 0; i < n; i++ {
+					entries[i].buf.Release()
 				}
+				if err != nil && !isSendMsgSizeErr(err) {
+					return err
+				}
+				select {
+				case h.available <- struct{}{}:
+				default:
+				}
+				continue
 			}
 
-			// Fall back to individual sends.
+			// Fall back to individual sends (non-Darwin / no WriteBatch support).
 			for i := 0; i < n; i++ {
 				if err := h.conn.Write(entries[i].buf.Data, entries[i].gsoSize, entries[i].ecn); err != nil {
 					if !isSendMsgSizeErr(err) {
