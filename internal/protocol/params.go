@@ -22,16 +22,16 @@ const MaxUndecryptablePackets = 32
 const ConnectionFlowControlMultiplier = 1.5
 
 // DefaultInitialMaxStreamData is the default initial stream-level flow control window for receiving data
-const DefaultInitialMaxStreamData = (1 << 10) * 512 // 512 kb
+const DefaultInitialMaxStreamData = 8 * (1 << 20) // 8 MB
 
 // DefaultInitialMaxData is the connection-level flow control window for receiving data
 const DefaultInitialMaxData = ConnectionFlowControlMultiplier * DefaultInitialMaxStreamData
 
 // DefaultMaxReceiveStreamFlowControlWindow is the default maximum stream-level flow control window for receiving data
-const DefaultMaxReceiveStreamFlowControlWindow = 6 * (1 << 20) // 6 MB
+const DefaultMaxReceiveStreamFlowControlWindow = 32 * (1 << 20) // 32 MB
 
 // DefaultMaxReceiveConnectionFlowControlWindow is the default connection-level flow control window for receiving data
-const DefaultMaxReceiveConnectionFlowControlWindow = 15 * (1 << 20) // 15 MB
+const DefaultMaxReceiveConnectionFlowControlWindow = 48 * (1 << 20) // 48 MB
 
 // WindowUpdateThreshold is the fraction of the receive window that has to be consumed before an higher offset is advertised to the client
 const WindowUpdateThreshold = 0.25
