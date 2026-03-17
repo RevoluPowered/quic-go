@@ -134,7 +134,7 @@ func NewSentPacketHandler(
 		rttStats,
 		connStats,
 		initialMaxDatagramSize,
-		true, // use Reno
+		true, // use Reno — recovers faster from loss on high-BDP links
 		qlogger,
 	)
 
